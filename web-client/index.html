@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ambient Audio Agent</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header class="app-header">
+    <div class="logo-group">
+      <div class="logo-icon"></div>
+      <h1 class="logo-text">Ambient Voice Agent</h1>
+    </div>
+    <div class="header-status">
+      <span id="state-badge" class="state-badge state-idle">IDLE</span>
+    </div>
+  </header>
+
+  <main class="main-container">
+    <section class="center-stage">
+      <div class="visualizer-card">
+        <canvas id="orb-canvas"></canvas>
+        <div class="controls-bar">
+          <button id="mic-toggle-btn" class="control-btn">
+            <span class="btn-label">Start Mic</span>
+          </button>
+          <button id="interrupt-btn" class="control-btn interrupt-btn">
+            <span>Barge-In (Stop)</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="chat-card">
+        <div class="chat-header">Live Conversation Stream</div>
+        <div id="transcript-list" class="transcript-list"></div>
+        <div class="input-bar">
+          <input type="text" id="text-input" class="text-input" placeholder="Type prompt or speak into mic...">
+          <button id="send-text-btn" class="send-btn">Send</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="sidebar">
+      <div class="sidebar-card">
+        <h2 class="sidebar-title">Multi-Device Sync Registry</h2>
+        <div id="devices-list" class="devices-list">
+          <div class="device-card">
+            <span class="device-name">Scanning for devices...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-card">
+        <h2 class="sidebar-title">System Information</h2>
+        <p style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.5;">
+          Decoupled event-driven streaming audio hub. 
+          16kHz PCM duplex WebSocket pipeline with Silero VAD, streaming STT/LLM, and low-latency TTS.
+        </p>
+      </div>
+    </aside>
+  </main>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

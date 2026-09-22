@@ -1,0 +1,15 @@
+{
+  "name": "Ambient Audio Agent",
+  "short_name": "AudioAgent",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090d16",
+  "theme_color": "#00f2fe",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

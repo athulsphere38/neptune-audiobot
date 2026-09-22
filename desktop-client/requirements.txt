@@ -1,0 +1,7 @@
+sounddevice>=0.4.6
+numpy>=1.26.0
+websocket-client>=1.7.0
+keyboard>=0.13.5
+pystray>=0.19.5
+pillow>=10.2.0
+requests>=2.31.0

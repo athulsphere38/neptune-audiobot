@@ -18,6 +18,7 @@ class AudioPipeManager:
         self.sd_available = False
 
         try:
+            # pyrefly: ignore [missing-import]
             import sounddevice as sd
             self.sd = sd
             self.sd_available = True
@@ -64,13 +65,37 @@ class AudioPipeManager:
         logger.info("Microphone capture stopped.")
 
     def play_chunk(self, audio_bytes: bytes):
-        if not self.sd_available:
+        if not self.sd_available or not audio_bytes:
             return
 
+        audio_float = None
+        # Attempt MP3 decoding via PyAV if stream starts with MP3 frame header or ID3 tag
+        if audio_bytes.startswith(b'ID3') or (len(audio_bytes) > 2 and audio_bytes[0] == 0xFF and (audio_bytes[1] & 0xE0) == 0xE0):
+            try:
+                import io, av
+                container = av.open(io.BytesIO(audio_bytes))
+                resampler = av.AudioResampler(format='s16', layout='mono', rate=self.sample_rate)
+                frames_pcm = []
+                for frame in container.decode(audio=0):
+                    resampled_frames = resampler.resample(frame)
+                    for rframe in resampled_frames:
+                        arr = rframe.to_ndarray()
+                        frames_pcm.append(arr.flatten())
+                if frames_pcm:
+                    pcm_int16 = np.concatenate(frames_pcm).astype(np.int16)
+                    audio_float = pcm_int16.astype(np.float32) / 32768.0
+            except Exception as mp3_err:
+                logger.debug(f"MP3 PyAV decode notice ({mp3_err}), falling back to PCM.")
+
+        if audio_float is None:
+            try:
+                audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
+                audio_float = audio_int16.astype(np.float32) / 32768.0
+            except Exception as pcm_err:
+                logger.error(f"Desktop PCM play chunk error: {pcm_err}")
+                return
+
         try:
-            # Check if bytes are raw 16-bit PCM
-            audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
-            audio_float = audio_int16.astype(np.float32) / 32768.0
             self.sd.play(audio_float, samplerate=self.sample_rate)
         except Exception as e:
             logger.error(f"Desktop playback exception: {e}")

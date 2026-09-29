@@ -1,0 +1,6 @@
+[
+  "backend/tests/test_backend.py::test_health_check",
+  "backend/tests/test_backend.py::test_list_devices",
+  "backend/tests/test_backend.py::test_memory_store",
+  "backend/tests/test_backend.py::test_vad_processor"
+]

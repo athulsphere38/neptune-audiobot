@@ -1,6 +1,6 @@
-# Cross-Device Ambient Audio Agent Architecture & Implementation
+# AURA — Cross-Device Ambient Audio Agent (Phase 2 Real Voice Conversation)
 
-An end-to-end, ultra-low-latency, cross-platform **Ambient Audio/Voice Bot** engineered to operate seamlessly across Web PWAs, Desktop Tray Daemons, and Mobile devices with real-time synchronized context, presence registry, and audio session handoff.
+An end-to-end, low-latency, cross-platform **Ambient Audio/Voice Bot** engineered to operate seamlessly across Web PWAs, Desktop Tray Daemons, and Mobile devices with real-time synchronized context, presence registry, local AI pipeline (FasterWhisper STT + Ollama LLM + Edge-TTS), and audio session handoff.
 
 ---
 
@@ -13,28 +13,41 @@ An end-to-end, ultra-low-latency, cross-platform **Ambient Audio/Voice Bot** eng
 [Voice Activity Detection (Silero VAD / Dynamic RMS Threshold)]
        │ (speech_start / speech_chunk / speech_end)
        ▼
-[Streaming STT (Deepgram Nova-2 / Groq Whisper / Mock Service)]
-       │ (Interim & Final Transcripts)
+[Local / Cloud STT (FasterWhisper CPU int8 / Deepgram Nova-2 / Groq Whisper)]
+       │ (Transcribed User Speech Segment)
        ▼
-[Agent Core / Tool Orchestrator (FastAPI Async Streaming + Memory Context)]
-       │ (Streaming Token Yield via Function Calling & System Context)
+[Local / Cloud LLM (Ollama / OpenAI / Groq / Gemini)]
+       │ (Streaming Token Yield via SQLite Session Memory)
        ▼
-[Low-Latency TTS (Cartesia Sonic / ElevenLabs Turbo v2.5 / Edge-TTS)]
+[Low-Latency TTS (Edge-TTS AvaNeural / Cartesia / ElevenLabs)]
        │ (Streaming MP3 / PCM Audio Chunks)
        ▼
-[Audio Sink / Speaker Out on Active Device (Web Audio Queue / SoundDevice)]
+[Audio Sink / Speaker Out on Active Device (Web Audio Queue / PyAV SoundDevice)]
 ```
 
 ---
 
-## 🌟 Key Features
+## 🌟 Verified Features (Phase 2 Production Milestone)
 
-1. **Ultra-Low Latency Duplex Streaming**: Raw 16kHz 16-bit linear PCM audio streaming over bidirectional WebSockets without full-sentence buffering.
-2. **Hardware-Thread Mic Capture**: Web Audio `AudioWorkletProcessor` (`audio-processor.worklet.js`) downsampling microphone data off the main UI thread.
-3. **Instant Barge-In (Interruption Handling)**: When user speaks while bot is outputting audio, server immediately emits `interrupted` signal, cancels downstream LLM/TTS pipeline, and client flushes speaker audio buffer instantly.
-4. **Multi-Device Synchronization & Session Handoff**: Central WebSocket state broker tracking connected devices (`web_pwa`, `desktop_tray`, `mobile_pwa`) with `/api/session/transfer` REST/WS endpoints for zero-friction active session transfers.
-5. **Persistent Conversation Memory**: SQLite DB (`aiosqlite`) storing session messages and device audit history.
-6. **Zero-Configuration Fallback Support**: Built-in zero-cost providers (`edge-tts`, RMS VAD engine, mock streaming) so the codebase is 100% runnable without paid API keys, while fully supporting production keys (`DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, `CARTESIA_API_KEY`, `ELEVENLABS_API_KEY`).
+1. **Free Local Speech-to-Text (`faster-whisper`)**:
+   - Uses `faster-whisper` on CPU with `int8` quantization for zero-cost, high-speed, local 16kHz PCM transcription.
+   - VAD speech boundary detection with silence filtering.
+2. **Local Ollama LLM Integration**:
+   - Direct connection to local Ollama server at `http://localhost:11434` with model `llama3.2` (or configured via `OLLAMA_MODEL`).
+   - Real-time token streaming over WebSocket (`llm_delta`).
+   - Clear error diagnostics if Ollama service is offline (no silent fake mocks).
+3. **Text-to-Speech (`edge-tts`) & Format Adapter**:
+   - Zero-cost streaming speech synthesis via `edge-tts` (`en-US-AvaNeural`).
+   - Web PWA decodes audio via Web Audio API `decodeAudioData`.
+   - Desktop client auto-decodes MP3 stream to 16kHz PCM via PyAV resampler before playing through `sounddevice`.
+4. **Instant Interruption & Barge-In**:
+   - Server-side active generation/streaming task cancellation on user speech or manual interruption (`{"type": "interrupt"}`).
+   - Web PWA `StreamingAudioPlayer.flush()` instantly stops playing audio and clears queue.
+   - Desktop client `audio_pipe.flush_output()` stops hardware speaker output.
+5. **Multi-Device Synchronization & Session Handoff**:
+   - Real-time device registration, active microphone tracking, and cross-device session handoff.
+6. **SQLite Conversation Memory**:
+   - Stores session history and device audit logs via `aiosqlite`.
 
 ---
 
@@ -43,70 +56,118 @@ An end-to-end, ultra-low-latency, cross-platform **Ambient Audio/Voice Bot** eng
 ```
 audiobot--/
 ├── backend/
-│   ├── app/
-│   │   ├── core/         # Config, VAD, audio buffers
-│   │   ├── services/     # STT, LLM, TTS providers
-│   │   ├── api/          # WebSocket routes, REST endpoints
-│   │   ├── state/        # Session manager, device sync
-│   │   └── db/           # SQLite conversation memory
-│   ├── tests/            # Automated pytest test suite
-│   ├── main.py           # FastAPI entrypoint
-│   ├── requirements.txt  # Python backend dependencies
-│   └── .env.example      # Environment config example
-├── web-client/           # PWA with AudioWorklet & Canvas Visualizer
+├── app/
+│   ├── core/         # Config, VAD engine, settings
+│   ├── services/     # FasterWhisper STT, Ollama LLM, Edge-TTS providers
+│   ├── api/          # WebSocket routes (/ws/audio, /ws/sync), REST API (/health, /api/devices)
+│   ├── state/        # Session manager, device sync registry
+│   └── db/           # SQLite conversation memory store
+├── tests/            # Automated pytest test suite
+├── main.py           # FastAPI entrypoint
+├── requirements.txt  # Python backend dependencies
+└── .env.example      # Environment configuration
+├── web-client/           # PWA web client
 │   ├── src/
-│   │   ├── app.js        # Main UI & visualizer orchestrator
+│   │   ├── app.js        # Main UI orchestrator & Canvas visualizer
 │   │   ├── audio-processor.worklet.js # 16kHz PCM AudioWorklet
-│   │   ├── audio-player.js            # Streaming player with flush()
-│   │   └── sync-client.js             # WebSocket multi-device sync
-│   ├── index.html        # Glassmorphic HTML shell
-│   ├── style.css         # Modern dark glassmorphic styling
-│   ├── manifest.json     # PWA manifest
-│   └── sw.js             # Service worker
+│   │   ├── audio-player.js            # Audio player with flush()
+│   │   └── sync-client.js             # Device sync WS client
+│   ├── index.html        # Modern HTML shell
+│   ├── style.css         # Dark glassmorphic styling
+│   └── manifest.json
 ├── desktop-client/       # Desktop background tray daemon
-│   ├── main.py           # Tray daemon with global hotkeys
-│   ├── audio_pipe.py     # Hardware sound capture & playback
-│   └── requirements.txt  # Desktop dependencies
+│   ├── main.py           # Tray daemon with hotkey Ctrl+Shift+Space
+│   ├── audio_pipe.py     # Hardware sound capture & PyAV playback decoder
+│   └── requirements.txt
 └── README.md
 ```
 
 ---
 
-## 🚀 Quick Start Guide
+## 🚀 Step-by-Step Windows Installation & Quick Start
 
-### 1. Backend Server Setup
+### 1. Prerequisites
+- **Python**: 3.10+ (Tested on Python 3.14)
+- **Ollama**: Download and install from [ollama.com](https://ollama.com)
 
-```bash
+### 2. Ollama Setup
+Pull a laptop-friendly local model (e.g. `llama3.2` or `tinyllama`):
+```cmd
+ollama pull llama3.2
+```
+Ensure Ollama server is running (default port: `http://localhost:11434`).
+
+### 3. Backend Setup & Virtual Environment
+
+```cmd
 cd backend
+python -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
-
-# Start backend server on http://localhost:8000
-python main.py
+pip install faster-whisper ollama
 ```
 
-### 2. Web Client (PWA)
+Copy `.env.example` to `.env` if custom configuration is required:
+```cmd
+copy .env.example .env
+```
 
-Serve the `web-client` directory using any static web server (e.g. Python `http.server` or Vite/live-server):
+Start the backend FastAPI server:
+```cmd
+python main.py
+```
+Backend will start on `http://localhost:8000`. Verify health at `http://localhost:8000/health`.
 
-```bash
+### 4. Running the Web Client (PWA)
+
+In a new terminal window:
+```cmd
 cd web-client
 python -m http.server 3000
 ```
-Open `http://localhost:3000` in Chrome/Edge/Safari or on a mobile browser on the same Wi-Fi network.
+Open `http://localhost:3000` in your browser. Click **Start Mic** to grant microphone access and start real-time voice conversation.
 
-### 3. Desktop Tray Daemon
+### 5. Running the Desktop Tray Daemon (Optional)
 
-```bash
+In a new terminal window:
+```cmd
 cd desktop-client
 pip install -r requirements.txt
 python main.py
 ```
+The tray daemon connects to `ws://localhost:8000/ws/audio`. Press `Ctrl+Shift+Space` to trigger instant barge-in interruption.
 
 ---
 
-## 🧪 Verification & Testing
+## 🧪 Automated Testing
 
-Run automated backend unit tests:
-```bash
-python -m pytest backend/tests -v
+Run the automated test suite:
+```cmd
+cd backend
+pytest -v
 ```
+
+Tests cover:
+- `/health` and `/api/devices` REST endpoints
+- Voice Activity Detector (VAD) speech boundary & RMS energy transitions
+- SQLite session memory read/write
+- Ollama LLM response streaming & offline server error diagnostics
+- `faster-whisper` STT model load & PCM transcription
+- `edge-tts` streaming synthesis
+- WebSocket handshake, device registration, and interruption signals
+- Desktop audio pipe MP3 PyAV decoding and playback
+
+---
+
+## ⚠️ Known Limitations & Hardware Context
+
+- **Ollama Offline**: If Ollama is not running on `http://localhost:11434`, the server sends a clear diagnostic error response (`Ollama service unavailable...`) so you can launch Ollama.
+- **Microphone Hardware in Headless Environment**: Automated CI unit tests run against mock/recorded audio fixtures. Live voice testing requires physical microphone hardware connected to the machine.
+
+---
+
+## 🛠 Recommended Development Next Steps (Phase 3)
+
+1. Add local wake-word engine (e.g. OpenWakeWord / Porcupine) for hands-free activation.
+2. Implement semantic RAG / tool-calling integrations with local SQLite knowledge search.
+3. Enhance desktop daemon tray UI with real-time audio input level meter.

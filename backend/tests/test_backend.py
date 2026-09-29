@@ -1,6 +1,14 @@
 import os
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import json
+import asyncio
+from unittest.mock import AsyncMock, patch, MagicMock
+
+# Ensure backend directory is first in sys.path
+backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+desktop_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../desktop-client"))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
 
 import pytest
 import pytest_asyncio
@@ -8,9 +16,12 @@ from fastapi.testclient import TestClient
 import numpy as np
 
 from main import app
-
 from app.core.vad import VoiceActivityDetector
 from app.db.memory import MemoryStore
+from app.services.llm import OllamaLLMService, MockLLMService
+from app.services.stt import FasterWhisperSTTService, MockSTTService, get_stt_service
+from app.services.tts import EdgeTTSService, get_tts_service
+from app.core.config import settings
 
 client = TestClient(app)
 
@@ -61,3 +72,109 @@ async def test_memory_store(tmp_path):
     assert messages[0]["role"] == "user"
     assert messages[0]["content"] == "Hello Audio Agent"
     assert messages[1]["role"] == "assistant"
+
+@pytest.mark.asyncio
+async def test_ollama_llm_service_streaming_mocked():
+    ollama_svc = OllamaLLMService(host="http://localhost:11434", model_name="llama3.2")
+    
+    # Mock httpx response stream for Ollama /api/chat
+    mock_lines = [
+        b'{"message": {"content": "Hello"}, "done": false}\n',
+        b'{"message": {"content": " world!"}, "done": true}\n'
+    ]
+    
+    class MockStream:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc, tb):
+            pass
+        @property
+        def status_code(self):
+            return 200
+        async def aiter_lines(self):
+            for l in mock_lines:
+                yield l.decode()
+
+    class MockAsyncClient:
+        def stream(self, method, url, json=None, timeout=None):
+            return MockStream()
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc, tb):
+            pass
+
+    with patch("httpx.AsyncClient", return_value=MockAsyncClient()):
+        tokens = []
+        async for token in ollama_svc.stream_completion("Hi", []):
+            tokens.append(token)
+        assert "".join(tokens) == "Hello world!"
+
+@pytest.mark.asyncio
+async def test_ollama_llm_service_unavailable():
+    ollama_svc = OllamaLLMService(host="http://localhost:9999", model_name="llama3.2")
+    # Should yield clear error message when host unavailable
+    tokens = []
+    async for token in ollama_svc.stream_completion("Test prompt", []):
+        tokens.append(token)
+    full_resp = "".join(tokens)
+    assert "Ollama service unavailable" in full_resp
+
+@pytest.mark.asyncio
+async def test_faster_whisper_stt_service():
+    stt = FasterWhisperSTTService(model_size="tiny.en")
+    # Empty audio should return empty string
+    res = await stt.transcribe_audio_chunk(b"")
+    assert res == ""
+
+    # Short silence PCM
+    silence_pcm = np.zeros(3200, dtype=np.int16).tobytes()
+    res_silence = await stt.transcribe_audio_chunk(silence_pcm)
+    assert isinstance(res_silence, str)
+
+@pytest.mark.asyncio
+async def test_edge_tts_service():
+    tts = EdgeTTSService(voice="en-US-AvaNeural")
+    
+    async def dummy_text_stream():
+        yield "Hello. "
+        yield "This is a test of streaming TTS synthesis."
+
+    chunks = []
+    async for chunk in tts.stream_tts(dummy_text_stream()):
+        chunks.append(chunk)
+    
+    assert len(chunks) > 0
+    assert isinstance(chunks[0], bytes)
+
+def test_websocket_audio_endpoint():
+    with client.websocket_connect("/ws/audio") as websocket:
+        # Register device
+        websocket.send_json({
+            "type": "register",
+            "device_id": "test_device_1",
+            "device_name": "Test Runner",
+            "device_type": "pytest"
+        })
+        
+        # Read messages until registered confirmation
+        msg = websocket.receive_json()
+        if msg.get("type") == "presence_update":
+            msg = websocket.receive_json()
+
+        assert msg.get("type") == "registered"
+
+        # Interrupt signal test
+        websocket.send_json({"type": "interrupt"})
+
+def test_desktop_audio_pipe_decoding():
+    if desktop_dir not in sys.path:
+        sys.path.append(desktop_dir)
+    try:
+        from audio_pipe import AudioPipeManager
+        pipe = AudioPipeManager()
+        # Test play_chunk with silence PCM
+        silence_pcm = np.zeros(160, dtype=np.int16).tobytes()
+        pipe.play_chunk(silence_pcm)
+        pipe.flush_output()
+    except Exception as e:
+        pytest.fail(f"Desktop audio pipe test raised exception: {e}")

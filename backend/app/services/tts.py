@@ -129,4 +129,4 @@ def get_tts_service() -> BaseTTSService:
         return CartesiaTTSService(settings.CARTESIA_API_KEY)
     elif provider == "elevenlabs" and settings.ELEVENLABS_API_KEY:
         return ElevenLabsTTSService(settings.ELEVENLABS_API_KEY)
-    return EdgeTTSService()
+    return EdgeTTSService(voice=settings.TTS_VOICE)

@@ -1,0 +1,12 @@
+[
+  "tests/test_backend.py::test_desktop_audio_pipe_decoding",
+  "tests/test_backend.py::test_edge_tts_service",
+  "tests/test_backend.py::test_faster_whisper_stt_service",
+  "tests/test_backend.py::test_health_check",
+  "tests/test_backend.py::test_list_devices",
+  "tests/test_backend.py::test_memory_store",
+  "tests/test_backend.py::test_ollama_llm_service_streaming_mocked",
+  "tests/test_backend.py::test_ollama_llm_service_unavailable",
+  "tests/test_backend.py::test_vad_processor",
+  "tests/test_backend.py::test_websocket_audio_endpoint"
+]

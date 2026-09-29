@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     SECRET_KEY: str = "audiobot_super_secret_key"
+    DEMO_MODE: bool = False
 
     # Audio Engine Pipeline Settings
     SAMPLE_RATE: int = 16000
@@ -14,9 +15,15 @@ class Settings(BaseSettings):
     SILENCE_DURATION_MS: int = 700
 
     # Provider Options
-    STT_PROVIDER: str = "mock"  # mock, deepgram, groq
-    TTS_PROVIDER: str = "edge_tts" # edge_tts, cartesia, elevenlabs, web
-    LLM_PROVIDER: str = "mock"  # mock, openai, groq, anthropic, gemini
+    STT_PROVIDER: str = "faster_whisper"  # faster_whisper, mock, deepgram, groq
+    STT_MODEL: str = "tiny.en"
+    
+    TTS_PROVIDER: str = "edge_tts" # edge_tts, cartesia, elevenlabs
+    TTS_VOICE: str = "en-US-AvaNeural"
+    
+    LLM_PROVIDER: str = "ollama"  # ollama, mock, openai, groq, anthropic, gemini
+    OLLAMA_HOST: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "llama3.2"
 
     # API Keys
     DEEPGRAM_API_KEY: str = ""

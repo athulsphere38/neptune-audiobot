@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import httpx
+import numpy as np
 from typing import AsyncGenerator, Optional
 from app.core.config import settings
 
@@ -11,10 +12,57 @@ class BaseSTTService:
     async def transcribe_audio_chunk(self, pcm_bytes: bytes) -> str:
         raise NotImplementedError
 
+class FasterWhisperSTTService(BaseSTTService):
+    """
+    Local speech recognition using faster-whisper on CPU.
+    Accepts 16kHz mono 16-bit PCM bytes from VAD segments.
+    """
+    def __init__(self, model_size: str = "tiny.en"):
+        self.model_size = model_size
+        self.model = None
+        self._init_error = None
+        try:
+            from faster_whisper import WhisperModel
+            logger.info(f"Initializing local faster-whisper model '{self.model_size}' (CPU int8)...")
+            self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8")
+            logger.info(f"faster-whisper model '{self.model_size}' initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to load faster-whisper model '{self.model_size}': {e}")
+            self._init_error = str(e)
+
+    async def transcribe_audio_chunk(self, pcm_bytes: bytes) -> str:
+        if not pcm_bytes or len(pcm_bytes) < 1000:
+            return ""
+
+        if self.model is None:
+            logger.error(f"FasterWhisper model unavailable ({self._init_error}).")
+            return ""
+
+        def _run_transcribe():
+            try:
+                # Convert 16-bit PCM to normalized float32 numpy array [-1.0, 1.0]
+                audio_int16 = np.frombuffer(pcm_bytes, dtype=np.int16)
+                if len(audio_int16) == 0:
+                    return ""
+                audio_float32 = audio_int16.astype(np.float32) / 32768.0
+
+                segments, _ = self.model.transcribe(
+                    audio_float32,
+                    beam_size=1,
+                    language="en",
+                    vad_filter=False
+                )
+                text = " ".join(seg.text for seg in segments).strip()
+                return text
+            except Exception as e:
+                logger.error(f"FasterWhisper transcription error: {e}")
+                return ""
+
+        return await asyncio.to_thread(_run_transcribe)
+
 class MockSTTService(BaseSTTService):
     """
-    Mock STT service when no external STT key is configured.
-    Provides intelligent responses based on speech presence.
+    Mock STT service when demo mode is active or fallback required.
     """
     def __init__(self):
         self.sample_queries = [
@@ -27,7 +75,6 @@ class MockSTTService(BaseSTTService):
         self.query_idx = 0
 
     async def transcribe_audio_chunk(self, pcm_bytes: bytes) -> str:
-        # Simulate quick transcription delay
         await asyncio.sleep(0.1)
         if len(pcm_bytes) < 1000:
             return ""
@@ -73,7 +120,6 @@ class GroqWhisperSTTService(BaseSTTService):
             return ""
 
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        # Package PCM bytes as WAV format for Whisper API endpoint
         import io, wave
         wav_buffer = io.BytesIO()
         with wave.open(wav_buffer, 'wb') as wav_file:
@@ -99,10 +145,31 @@ class GroqWhisperSTTService(BaseSTTService):
                 logger.error(f"Groq Whisper Exception: {e}")
                 return ""
 
+_faster_whisper_instance = None
+
 def get_stt_service() -> BaseSTTService:
+    global _faster_whisper_instance
+    if settings.DEMO_MODE:
+        return MockSTTService()
+
     provider = settings.STT_PROVIDER.lower()
-    if provider == "deepgram" and settings.DEEPGRAM_API_KEY:
+    if provider in ["faster_whisper", "faster-whisper", "whisper"]:
+        if _faster_whisper_instance is None:
+            _faster_whisper_instance = FasterWhisperSTTService(settings.STT_MODEL)
+        return _faster_whisper_instance
+    elif provider == "deepgram" and settings.DEEPGRAM_API_KEY:
         return DeepgramSTTService(settings.DEEPGRAM_API_KEY)
     elif provider == "groq" and settings.GROQ_API_KEY:
         return GroqWhisperSTTService(settings.GROQ_API_KEY)
+    elif provider == "mock":
+        return MockSTTService()
+
+    # Fallback to faster_whisper if installed, otherwise MockSTTService
+    if _faster_whisper_instance is None:
+        try:
+            _faster_whisper_instance = FasterWhisperSTTService(settings.STT_MODEL)
+            if _faster_whisper_instance.model is not None:
+                return _faster_whisper_instance
+        except Exception:
+            pass
     return MockSTTService()
